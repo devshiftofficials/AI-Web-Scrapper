@@ -66,6 +66,39 @@ export interface ScrapingResult {
     tables?: Array<{ headers: string[]; rows: string[][]; }>;
     structuredData?: Record<string, unknown>[];
     customData?: Record<string, string | string[]>;
+    paginationInfo?: {
+      pagination: {
+        type: 'pagination' | 'infinite_scroll' | 'load_more' | 'none';
+        nextPageUrl?: string;
+        nextPageSelector?: string;
+        loadMoreSelector?: string;
+        pageNumbers?: number[];
+        totalPages?: number;
+        currentPage?: number;
+      };
+      infiniteScroll: {
+        hasInfiniteScroll: boolean;
+        scrollTriggers: Array<{
+          selector: string;
+          type: 'button' | 'scroll' | 'auto';
+          action?: string;
+        }>;
+        contentContainer?: string;
+        itemSelector?: string;
+      };
+      detectedPatterns: string[];
+    };
+    paginationData?: {
+      totalPagesCrawled: number;
+      pages: Array<{
+        url: string;
+        page: number;
+        contentLength: number;
+      }>;
+      paginationPatterns: string[];
+      paginationType: string;
+      infiniteScrollDetected: boolean;
+    };
   };
   analyzedAt: string;
 }

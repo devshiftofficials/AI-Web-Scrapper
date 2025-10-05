@@ -161,7 +161,7 @@ export function validateCustomSchema(schema: Record<string, string>): Validation
   };
 }
 
-export function validateExtractionOptions(options: Record<string, boolean | Record<string, string>>): ValidationResult {
+export function validateExtractionOptions(options: Record<string, boolean | Record<string, string> | undefined>): ValidationResult {
   if (!options || typeof options !== 'object') {
     return {
       isValid: false,
@@ -187,11 +187,22 @@ export function validateExtractionOptions(options: Record<string, boolean | Reco
       };
     }
 
-    if (typeof value !== 'boolean') {
-      return {
-        isValid: false,
-        error: `Extraction option "${key}" must be a boolean`
-      };
+    // Handle customSchema specially - it can be undefined or an object
+    if (key === 'customSchema') {
+      if (value !== undefined && typeof value !== 'object') {
+        return {
+          isValid: false,
+          error: `Extraction option "${key}" must be an object or undefined`
+        };
+      }
+    } else {
+      // All other options must be boolean
+      if (typeof value !== 'boolean') {
+        return {
+          isValid: false,
+          error: `Extraction option "${key}" must be a boolean`
+        };
+      }
     }
   }
 

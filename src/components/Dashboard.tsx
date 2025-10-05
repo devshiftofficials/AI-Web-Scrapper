@@ -9,6 +9,7 @@ import {
   Shield, 
   BarChart3, 
   Download,
+  FolderDown,
   Code,
   TrendingUp,
   AlertTriangle,
@@ -21,6 +22,7 @@ import {
   Settings,
   Play,
   History,
+  Monitor,
   Database,
   FileText,
   Link,
@@ -75,6 +77,39 @@ interface ScrapingResult {
     tables?: Array<{ headers: string[]; rows: string[][]; }>;
     structuredData?: Record<string, unknown>[];
     customData?: Record<string, string | string[]>;
+    paginationInfo?: {
+      pagination: {
+        type: 'pagination' | 'infinite_scroll' | 'load_more' | 'none';
+        nextPageUrl?: string;
+        nextPageSelector?: string;
+        loadMoreSelector?: string;
+        pageNumbers?: number[];
+        totalPages?: number;
+        currentPage?: number;
+      };
+      infiniteScroll: {
+        hasInfiniteScroll: boolean;
+        scrollTriggers: Array<{
+          selector: string;
+          type: 'button' | 'scroll' | 'auto';
+          action?: string;
+        }>;
+        contentContainer?: string;
+        itemSelector?: string;
+      };
+      detectedPatterns: string[];
+    };
+    paginationData?: {
+      totalPagesCrawled: number;
+      pages: Array<{
+        url: string;
+        page: number;
+        contentLength: number;
+      }>;
+      paginationPatterns: string[];
+      paginationType: string;
+      infiniteScrollDetected: boolean;
+    };
   };
   analyzedAt: string;
 }
@@ -108,6 +143,32 @@ interface ScrapingOptions {
   userAgent?: string;
 }
 
+interface MonitoringJob {
+  id: string;
+  url: string;
+  name: string;
+  userId: string;
+  isActive: boolean;
+  createdAt: string;
+  lastChecked?: string;
+  lastChange?: string;
+  checkInterval: number;
+  selectors: string[];
+  previousContent: Record<string, string>;
+  notifications: {
+    email?: string;
+    webhook?: string;
+    enabled: boolean;
+  };
+  changeHistory: Array<{
+    timestamp: string;
+    selector: string;
+    changeType: 'added' | 'removed' | 'modified';
+    oldContent?: string;
+    newContent?: string;
+  }>;
+}
+
 export default function Dashboard() {
   const [url, setUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -136,10 +197,18 @@ export default function Dashboard() {
   const [activeJob, setActiveJob] = useState<ScrapingJob | null>(null);
   const [customSchemaFields, setCustomSchemaFields] = useState<Array<{name: string, selector: string}>>([]);
   const [showTermsOfUse, setShowTermsOfUse] = useState(false);
+  
+  // Monitoring state
+  const [monitoringJobs, setMonitoringJobs] = useState<MonitoringJob[]>([]);
+  const [showMonitoringMode, setShowMonitoringMode] = useState(false);
+  const [monitoringSelectors, setMonitoringSelectors] = useState<string[]>(['']);
+  const [monitoringName, setMonitoringName] = useState('');
+  const [monitoringInterval, setMonitoringInterval] = useState(60);
 
   // Load job history on component mount
   useEffect(() => {
     loadJobHistory();
+    loadMonitoringJobs();
   }, []);
 
   const loadJobHistory = async () => {
@@ -256,6 +325,156 @@ export default function Dashboard() {
     }
   }, [activeJob]);
 
+  const loadMonitoringJobs = async () => {
+    try {
+      const response = await fetch('/api/monitoring?userId=user_' + Date.now());
+      const data = await response.json();
+      if (response.ok) {
+        setMonitoringJobs(data.jobs || []);
+      }
+    } catch (error) {
+      console.error('Failed to load monitoring jobs:', error);
+    }
+  };
+
+  const createMonitoringJob = async () => {
+    if (!url || !monitoringName || monitoringSelectors.length === 0) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/monitoring', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url,
+          name: monitoringName,
+          userId: 'user_' + Date.now(),
+          checkInterval: monitoringInterval,
+          selectors: monitoringSelectors.filter(s => s.trim() !== ''),
+          notifications: { enabled: false }
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create monitoring job');
+      }
+
+      toast.success('Monitoring job created successfully!');
+      setShowMonitoringMode(false);
+      setMonitoringName('');
+      setMonitoringSelectors(['']);
+      loadMonitoringJobs();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create monitoring job';
+      toast.error(errorMessage);
+    }
+  };
+
+  const addMonitoringSelector = () => {
+    setMonitoringSelectors([...monitoringSelectors, '']);
+  };
+
+  const removeMonitoringSelector = (index: number) => {
+    setMonitoringSelectors(monitoringSelectors.filter((_, i) => i !== index));
+  };
+
+  const updateMonitoringSelector = (index: number, value: string) => {
+    const updated = [...monitoringSelectors];
+    updated[index] = value;
+    setMonitoringSelectors(updated);
+  };
+
+  const toggleMonitoringJob = async (jobId: string, isActive: boolean) => {
+    try {
+      const response = await fetch(`/api/monitoring/status/${jobId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ isActive }),
+      });
+
+      if (response.ok) {
+        toast.success(`Monitoring job ${isActive ? 'started' : 'stopped'}`);
+        loadMonitoringJobs();
+      }
+    } catch (error) {
+      toast.error('Failed to update monitoring job');
+    }
+  };
+
+  const deleteMonitoringJob = async (jobId: string) => {
+    try {
+      const response = await fetch(`/api/monitoring/status/${jobId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        toast.success('Monitoring job deleted');
+        loadMonitoringJobs();
+      }
+    } catch (error) {
+      toast.error('Failed to delete monitoring job');
+    }
+  };
+
+  const downloadSingleImage = async (imageSrc: string, imageAlt: string) => {
+    try {
+      const { downloadImage } = await import('../utils/imageDownloader');
+      const result = await downloadImage(
+        { src: imageSrc, alt: imageAlt },
+        url
+      );
+      
+      if (result.success) {
+        toast.success(`Image downloaded: ${result.filename}`);
+      } else {
+        toast.error(`Failed to download image: ${result.error}`);
+      }
+    } catch (error) {
+      toast.error('Failed to download image');
+    }
+  };
+
+  const downloadAllImages = async () => {
+    if (!result?.extractedData?.images || result.extractedData.images.length === 0) {
+      toast.error('No images found to download');
+      return;
+    }
+
+    try {
+      toast.loading('Preparing images for download...', { id: 'bulk-download' });
+      
+      const { downloadImagesAsZip, processImageData } = await import('../utils/imageDownloader');
+      const processedImages = processImageData(result.extractedData.images, url);
+      
+      const result_data = await downloadImagesAsZip(
+        processedImages,
+        url,
+        `scraped_images_${new Date().toISOString().split('T')[0]}.zip`
+      );
+      
+      toast.dismiss('bulk-download');
+      
+      if (result_data.successfulDownloads > 0) {
+        toast.success(
+          `Downloaded ${result_data.successfulDownloads}/${result_data.totalImages} images successfully!`
+        );
+      } else {
+        toast.error('Failed to download any images');
+      }
+    } catch (error) {
+      toast.dismiss('bulk-download');
+      toast.error('Failed to download images');
+    }
+  };
+
   const downloadPDF = () => {
     if (!result) return;
     
@@ -326,6 +545,7 @@ export default function Dashboard() {
     { id: 'ai', name: 'AI Insights', icon: Brain },
     { id: 'extracted', name: 'Extracted Data', icon: Database },
     { id: 'jobs', name: 'Job History', icon: History },
+    { id: 'monitoring', name: 'Monitoring', icon: Monitor },
   ];
 
   return (
@@ -426,16 +646,32 @@ export default function Dashboard() {
 
             {/* Advanced Options Toggle */}
             <div className="mt-4 flex items-center justify-between">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-                className="flex items-center space-x-2 text-gray-300 hover:text-white transition-colors duration-200"
-              >
-                <Settings className="h-4 w-4" />
-                <span>Advanced Options</span>
-                {showAdvancedOptions ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </motion.button>
+              <div className="flex items-center space-x-4">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                  className="flex items-center space-x-2 text-gray-300 hover:text-white transition-colors duration-200"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span>Advanced Options</span>
+                  {showAdvancedOptions ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </motion.button>
+                
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setShowMonitoringMode(!showMonitoringMode)}
+                  className={`flex items-center space-x-2 px-3 py-1 rounded-lg transition-colors duration-200 ${
+                    showMonitoringMode
+                      ? 'bg-green-500/20 text-green-300'
+                      : 'text-gray-300 hover:text-white'
+                  }`}
+                >
+                  <Monitor className="h-4 w-4" />
+                  <span>Monitoring Mode</span>
+                </motion.button>
+              </div>
               
               <motion.button
                 whileHover={{ scale: 1.02 }}
@@ -456,42 +692,86 @@ export default function Dashboard() {
                   exit={{ opacity: 0, height: 0 }}
                   className="mt-6 space-y-6"
                 >
-                  {/* Crawling Options */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-2">Crawl Depth</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="10"
-                        value={scrapingOptions.depth}
-                        onChange={(e) => setScrapingOptions({...scrapingOptions, depth: parseInt(e.target.value) || 0})}
-                        className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-2">Max Pages</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="1000"
-                        value={scrapingOptions.maxPages}
-                        onChange={(e) => setScrapingOptions({...scrapingOptions, maxPages: parseInt(e.target.value) || 1})}
-                        className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-2">Crawl Delay (ms)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="10000"
-                        value={scrapingOptions.crawlDelay}
-                        onChange={(e) => setScrapingOptions({...scrapingOptions, crawlDelay: parseInt(e.target.value) || 1000})}
-                        className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      />
-                    </div>
+              {/* Crawling Options */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-300 mb-2">Crawl Depth</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="10"
+                    value={scrapingOptions.depth}
+                    onChange={(e) => setScrapingOptions({...scrapingOptions, depth: parseInt(e.target.value) || 0})}
+                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-300 mb-2">Max Pages</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={scrapingOptions.maxPages}
+                    onChange={(e) => setScrapingOptions({...scrapingOptions, maxPages: parseInt(e.target.value) || 1})}
+                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-300 mb-2">Crawl Delay (ms)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="10000"
+                    value={scrapingOptions.crawlDelay}
+                    onChange={(e) => setScrapingOptions({...scrapingOptions, crawlDelay: parseInt(e.target.value) || 1000})}
+                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+              </div>
+              
+              {/* Pagination Options */}
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                <h4 className="text-lg font-semibold text-blue-300 mb-3 flex items-center">
+                  <Layers className="h-5 w-5 mr-2" />
+                  Pagination & Infinite Scroll
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-2">Max Pages to Crawl</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={scrapingOptions.maxPages}
+                      onChange={(e) => setScrapingOptions({...scrapingOptions, maxPages: parseInt(e.target.value) || 1})}
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Set to 1 for single page, 2+ for pagination crawling
+                    </p>
                   </div>
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-2">Page Delay (ms)</label>
+                    <input
+                      type="number"
+                      min="500"
+                      max="5000"
+                      value={scrapingOptions.crawlDelay || 1000}
+                      onChange={(e) => setScrapingOptions({...scrapingOptions, crawlDelay: parseInt(e.target.value) || 1000})}
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Delay between page requests (be respectful!)
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 p-3 bg-blue-500/5 rounded-lg">
+                  <p className="text-sm text-blue-300">
+                    <strong>Auto-Detection:</strong> The scraper will automatically detect pagination patterns, 
+                    infinite scroll, and load-more buttons. Set Max Pages to 2 or more to enable multi-page crawling.
+                  </p>
+                </div>
+              </div>
 
                   {/* Respect Robots.txt */}
                   <div className="flex items-center space-x-3">
@@ -589,6 +869,94 @@ export default function Dashboard() {
                           </motion.button>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Monitoring Mode Panel */}
+            <AnimatePresence>
+              {showMonitoringMode && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mt-6 space-y-6"
+                >
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold text-green-300 mb-4 flex items-center">
+                      <Monitor className="h-5 w-5 mr-2" />
+                      Content Change Monitoring
+                    </h3>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm text-gray-300 mb-2">Monitoring Job Name</label>
+                        <input
+                          type="text"
+                          placeholder="e.g., Product Price Monitor"
+                          value={monitoringName}
+                          onChange={(e) => setMonitoringName(e.target.value)}
+                          className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm text-gray-300 mb-2">Check Interval (minutes)</label>
+                        <input
+                          type="number"
+                          min="5"
+                          max="1440"
+                          value={monitoringInterval}
+                          onChange={(e) => setMonitoringInterval(parseInt(e.target.value) || 60)}
+                          className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-green-400"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm text-gray-300 mb-2">CSS Selectors to Monitor</label>
+                        <div className="space-y-2">
+                          {monitoringSelectors.map((selector, index) => (
+                            <div key={index} className="flex items-center space-x-2">
+                              <input
+                                type="text"
+                                placeholder="e.g., .price, #product-title, h1"
+                                value={selector}
+                                onChange={(e) => updateMonitoringSelector(index, e.target.value)}
+                                className="flex-1 px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400"
+                              />
+                              <motion.button
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                                onClick={() => removeMonitoringSelector(index)}
+                                className="p-2 bg-red-500/20 text-red-300 rounded-lg hover:bg-red-500/30 transition-colors duration-200"
+                              >
+                                <Minus className="h-4 w-4" />
+                              </motion.button>
+                            </div>
+                          ))}
+                        </div>
+                        <motion.button
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={addMonitoringSelector}
+                          className="mt-2 flex items-center space-x-2 px-3 py-2 bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors duration-200"
+                        >
+                          <Plus className="h-4 w-4" />
+                          <span>Add Selector</span>
+                        </motion.button>
+                      </div>
+                      
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={createMonitoringJob}
+                        className="w-full px-4 py-3 bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors duration-200 font-semibold"
+                      >
+                        <Monitor className="h-4 w-4 inline mr-2" />
+                        Start Monitoring
+                      </motion.button>
                     </div>
                   </div>
                 </motion.div>
@@ -1061,6 +1429,137 @@ export default function Dashboard() {
                         
                         {result?.extractedData ? (
                           <div className="space-y-6">
+                            {/* Pagination Information */}
+                            {result.extractedData.paginationInfo && (
+                              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                                <h4 className="text-lg font-semibold text-blue-300 mb-3 flex items-center">
+                                  <Layers className="h-5 w-5 mr-2" />
+                                  Pagination Analysis
+                                </h4>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                  <div>
+                                    <p className="text-gray-400 text-sm">Pagination Type</p>
+                                    <p className="text-white font-medium capitalize">
+                                      {result.extractedData.paginationInfo.pagination.type.replace('_', ' ')}
+                                    </p>
+                                  </div>
+                                  
+                                  {result.extractedData.paginationInfo.pagination.totalPages && (
+                                    <div>
+                                      <p className="text-gray-400 text-sm">Total Pages</p>
+                                      <p className="text-white font-medium">
+                                        {result.extractedData.paginationInfo.pagination.totalPages}
+                                      </p>
+                                    </div>
+                                  )}
+                                  
+                                  {result.extractedData.paginationInfo.pagination.currentPage && (
+                                    <div>
+                                      <p className="text-gray-400 text-sm">Current Page</p>
+                                      <p className="text-white font-medium">
+                                        {result.extractedData.paginationInfo.pagination.currentPage}
+                                      </p>
+                                    </div>
+                                  )}
+                                  
+                                  <div>
+                                    <p className="text-gray-400 text-sm">Infinite Scroll</p>
+                                    <p className="text-white font-medium">
+                                      {result.extractedData.paginationInfo.infiniteScroll.hasInfiniteScroll ? 'Yes' : 'No'}
+                                    </p>
+                                  </div>
+                                </div>
+                                
+                                {result.extractedData.paginationInfo.detectedPatterns.length > 0 && (
+                                  <div>
+                                    <p className="text-gray-400 text-sm mb-2">Detected Patterns:</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {result.extractedData.paginationInfo.detectedPatterns.map((pattern, idx) => (
+                                        <span
+                                          key={idx}
+                                          className="px-2 py-1 bg-blue-500/20 text-blue-300 rounded text-xs"
+                                        >
+                                          {pattern}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {result.extractedData.paginationInfo.pagination.nextPageUrl && (
+                                  <div className="mt-3">
+                                    <p className="text-gray-400 text-sm">Next Page URL:</p>
+                                    <p className="text-blue-300 text-sm break-all">
+                                      {result.extractedData.paginationInfo.pagination.nextPageUrl}
+                                    </p>
+                                  </div>
+                                )}
+                                
+                                {result.extractedData.paginationInfo.infiniteScroll.scrollTriggers.length > 0 && (
+                                  <div className="mt-3">
+                                    <p className="text-gray-400 text-sm mb-2">Scroll Triggers:</p>
+                                    <div className="space-y-1">
+                                      {result.extractedData.paginationInfo.infiniteScroll.scrollTriggers.map((trigger, idx) => (
+                                        <div key={idx} className="bg-white/5 rounded p-2 text-sm">
+                                          <span className="text-white">{trigger.selector}</span>
+                                          <span className="text-gray-400 ml-2">({trigger.type})</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            
+                            {/* Pagination Data (for multi-page crawls) */}
+                            {result.extractedData.paginationData && (
+                              <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                                <h4 className="text-lg font-semibold text-green-300 mb-3 flex items-center">
+                                  <Activity className="h-5 w-5 mr-2" />
+                                  Multi-Page Crawl Results
+                                </h4>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                  <div>
+                                    <p className="text-gray-400 text-sm">Pages Crawled</p>
+                                    <p className="text-white font-medium">
+                                      {result.extractedData.paginationData.totalPagesCrawled}
+                                    </p>
+                                  </div>
+                                  
+                                  <div>
+                                    <p className="text-gray-400 text-sm">Pagination Type</p>
+                                    <p className="text-white font-medium capitalize">
+                                      {result.extractedData.paginationData.paginationType.replace('_', ' ')}
+                                    </p>
+                                  </div>
+                                  
+                                  <div>
+                                    <p className="text-gray-400 text-sm">Infinite Scroll</p>
+                                    <p className="text-white font-medium">
+                                      {result.extractedData.paginationData.infiniteScrollDetected ? 'Detected' : 'Not Detected'}
+                                    </p>
+                                  </div>
+                                </div>
+                                
+                                <div>
+                                  <p className="text-gray-400 text-sm mb-2">Crawled Pages:</p>
+                                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                                    {result.extractedData.paginationData.pages.map((page, idx) => (
+                                      <div key={idx} className="bg-white/5 rounded p-2 text-sm">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-white">Page {page.page}</span>
+                                          <span className="text-gray-400">{page.contentLength} chars</span>
+                                        </div>
+                                        <p className="text-blue-300 text-xs break-all">{page.url}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            
                             {/* Text Content */}
                             {result.extractedData.text && (
                               <div className="bg-white/5 rounded-xl p-6">
@@ -1106,19 +1605,63 @@ export default function Dashboard() {
                             {/* Images */}
                             {result.extractedData.images && result.extractedData.images.length > 0 && (
                               <div className="bg-white/5 rounded-xl p-6">
-                                <h4 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
-                                  <Image className="h-5 w-5 text-yellow-400" />
-                                  <span>Images ({result.extractedData.images.length})</span>
-                                </h4>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-h-60 overflow-y-auto">
-                                  {result.extractedData.images.slice(0, 12).map((image, index) => (
-                                    <div key={index} className="bg-gray-800 rounded-lg p-3">
-                                      <div className="aspect-square bg-gray-700 rounded-lg mb-2 flex items-center justify-center">
-                                        <Image className="h-8 w-8 text-gray-400" />
+                                <div className="flex items-center justify-between mb-4">
+                                  <h4 className="text-lg font-semibold text-white flex items-center space-x-2">
+                                    <Image className="h-5 w-5 text-yellow-400" />
+                                    <span>Images ({result.extractedData.images.length})</span>
+                                  </h4>
+                                  <motion.button
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={downloadAllImages}
+                                    className="flex items-center space-x-2 px-4 py-2 bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors duration-200"
+                                  >
+                                    <FolderDown className="h-4 w-4" />
+                                    <span>Download All</span>
+                                  </motion.button>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto">
+                                  {result.extractedData.images.map((image, index) => (
+                                    <motion.div
+                                      key={index}
+                                      initial={{ opacity: 0, scale: 0.9 }}
+                                      animate={{ opacity: 1, scale: 1 }}
+                                      transition={{ delay: index * 0.05 }}
+                                      className="bg-white/5 rounded-lg p-4 border border-white/10"
+                                    >
+                                      <div className="aspect-square bg-gray-800 rounded-lg mb-3 overflow-hidden">
+                                        <img
+                                          src={image.src}
+                                          alt={image.alt || 'Scraped image'}
+                                          className="w-full h-full object-cover"
+                                          onError={(e) => {
+                                            const target = e.target as HTMLImageElement;
+                                            target.style.display = 'none';
+                                            target.parentElement!.innerHTML = '<div class="flex items-center justify-center h-full text-gray-400"><Image class="h-8 w-8" /></div>';
+                                          }}
+                                        />
                                       </div>
-                                      <p className="text-white text-xs truncate">{image.alt || 'No alt text'}</p>
-                                      <p className="text-gray-400 text-xs truncate">{image.src}</p>
-                                    </div>
+                                      
+                                      <div className="space-y-2">
+                                        <p className="text-white text-sm font-medium truncate">
+                                          {image.alt || 'Untitled Image'}
+                                        </p>
+                                        <p className="text-gray-400 text-xs truncate">
+                                          {image.src}
+                                        </p>
+                                        
+                                        <motion.button
+                                          whileHover={{ scale: 1.05 }}
+                                          whileTap={{ scale: 0.95 }}
+                                          onClick={() => downloadSingleImage(image.src, image.alt)}
+                                          className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors duration-200 text-sm"
+                                        >
+                                          <Download className="h-4 w-4" />
+                                          <span>Download</span>
+                                        </motion.button>
+                                      </div>
+                                    </motion.div>
                                   ))}
                                 </div>
                               </div>
@@ -1253,6 +1796,143 @@ export default function Dashboard() {
                           <div className="text-center py-12">
                             <History className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                             <p className="text-gray-400">No job history available. Start a background scraping job to see it here.</p>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+
+                    {activeTab === 'monitoring' && (
+                      <motion.div
+                        key="monitoring"
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        className="space-y-6"
+                      >
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-2xl font-semibold text-white flex items-center space-x-2">
+                            <Monitor className="h-6 w-6 text-green-400" />
+                            <span>Content Monitoring</span>
+                          </h3>
+                          <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={loadMonitoringJobs}
+                            className="px-4 py-2 bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors duration-200"
+                          >
+                            Refresh
+                          </motion.button>
+                        </div>
+                        
+                        {monitoringJobs.length > 0 ? (
+                          <div className="space-y-4">
+                            {monitoringJobs.map((job, index) => (
+                              <motion.div
+                                key={job.id}
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: index * 0.1 }}
+                                className="bg-white/5 rounded-xl p-6 border border-white/10"
+                              >
+                                <div className="flex items-center justify-between mb-4">
+                                  <div className="flex items-center space-x-3">
+                                    <div className={`h-3 w-3 rounded-full ${job.isActive ? 'bg-green-400' : 'bg-gray-400'}`} />
+                                    <div>
+                                      <h4 className="text-white font-medium">{job.name}</h4>
+                                      <p className="text-gray-400 text-sm">{job.url}</p>
+                                      <p className="text-gray-500 text-xs">
+                                        Created: {new Date(job.createdAt).toLocaleString()}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <motion.button
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
+                                      onClick={() => toggleMonitoringJob(job.id, !job.isActive)}
+                                      className={`px-3 py-1 rounded-lg text-sm transition-colors duration-200 ${
+                                        job.isActive
+                                          ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                                          : 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
+                                      }`}
+                                    >
+                                      {job.isActive ? 'Stop' : 'Start'}
+                                    </motion.button>
+                                    <motion.button
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
+                                      onClick={() => deleteMonitoringJob(job.id)}
+                                      className="px-3 py-1 bg-red-500/20 text-red-300 rounded-lg hover:bg-red-500/30 transition-colors duration-200"
+                                    >
+                                      Delete
+                                    </motion.button>
+                                  </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                  <div className="bg-white/5 rounded-lg p-3">
+                                    <p className="text-gray-400 text-sm">Check Interval</p>
+                                    <p className="text-white font-medium">{job.checkInterval} minutes</p>
+                                  </div>
+                                  <div className="bg-white/5 rounded-lg p-3">
+                                    <p className="text-gray-400 text-sm">Last Checked</p>
+                                    <p className="text-white font-medium">
+                                      {job.lastChecked ? new Date(job.lastChecked).toLocaleString() : 'Never'}
+                                    </p>
+                                  </div>
+                                  <div className="bg-white/5 rounded-lg p-3">
+                                    <p className="text-gray-400 text-sm">Last Change</p>
+                                    <p className="text-white font-medium">
+                                      {job.lastChange ? new Date(job.lastChange).toLocaleString() : 'No changes detected'}
+                                    </p>
+                                  </div>
+                                </div>
+                                
+                                <div className="mb-4">
+                                  <p className="text-gray-400 text-sm mb-2">Monitored Selectors:</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {job.selectors.map((selector, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="px-2 py-1 bg-blue-500/20 text-blue-300 rounded text-xs"
+                                      >
+                                        {selector}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                                
+                                {job.changeHistory.length > 0 && (
+                                  <div>
+                                    <p className="text-gray-400 text-sm mb-2">Recent Changes:</p>
+                                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                                      {job.changeHistory.slice(-5).map((change, idx) => (
+                                        <div key={idx} className="bg-white/5 rounded p-2 text-sm">
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-white">{change.selector}</span>
+                                            <span className={`px-2 py-1 rounded text-xs ${
+                                              change.changeType === 'added' ? 'bg-green-500/20 text-green-300' :
+                                              change.changeType === 'removed' ? 'bg-red-500/20 text-red-300' :
+                                              'bg-yellow-500/20 text-yellow-300'
+                                            }`}>
+                                              {change.changeType}
+                                            </span>
+                                          </div>
+                                          <p className="text-gray-400 text-xs">
+                                            {new Date(change.timestamp).toLocaleString()}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </motion.div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-12">
+                            <Monitor className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                            <p className="text-gray-400">No monitoring jobs found. Create a monitoring job to track content changes.</p>
                           </div>
                         )}
                       </motion.div>

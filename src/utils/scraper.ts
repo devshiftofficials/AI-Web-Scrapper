@@ -1,10 +1,21 @@
 import * as cheerio from 'cheerio';
 import { ScrapingOptions, ScrapingResult } from '../utils/jobQueue';
+import { analyzePaginationPatterns, crawlPagination } from '../utils/paginationHandler';
 
 // Main scraping function that can be used by both direct calls and job queue
 export async function performScraping(url: string, options: ScrapingOptions): Promise<ScrapingResult> {
   const startTime = Date.now();
   
+  // Handle pagination and infinite scroll if maxPages > 1
+  if (options.maxPages > 1) {
+    return await performMultiPageScraping(url, options, startTime);
+  }
+
+  // Single page scraping (existing logic)
+  return await performSinglePageScraping(url, options, startTime);
+}
+
+async function performSinglePageScraping(url: string, options: ScrapingOptions, startTime: number): Promise<ScrapingResult> {
   // Fetch the page content using server-side fetch
   const response = await fetch(url, {
     headers: {
@@ -25,33 +36,36 @@ export async function performScraping(url: string, options: ScrapingOptions): Pr
 
   const content = await response.text();
   const loadTime = Date.now() - startTime;
-  
+
   // Parse content with cheerio
   const $ = cheerio.load(content);
-    
+
   // Extract basic information
   const title = $('title').text() || 'No title found';
   const description = $('meta[name="description"]').attr('content') || 'No description found';
-  
+
   // Detect technologies and languages
   const technologies = detectTechnologies($, content);
   const languages = detectProgrammingLanguages($, content);
-  
+
   // Enhanced performance analysis with AI
   const performance = analyzePerformanceWithAI(loadTime, content);
-  
+
   // Enhanced SEO analysis
   const seo = analyzeSEOWithAI($, content);
-  
+
   // AI-powered insights
   const aiInsights = generateAIInsights(content, technologies, performance);
-  
+
   // Generate intelligent recommendations
   const recommendations = generateIntelligentRecommendations(technologies, performance, seo, aiInsights);
-  
+
   // Extract additional data based on options
   const extractedData = await extractData($, content, options.extractionOptions);
-  
+
+  // Analyze pagination patterns
+  const paginationAnalysis = analyzePaginationPatterns($, url);
+
   const result: ScrapingResult = {
     url,
     title,
@@ -62,11 +76,100 @@ export async function performScraping(url: string, options: ScrapingOptions): Pr
     seo,
     recommendations,
     aiInsights,
-    extractedData,
+    extractedData: {
+      ...extractedData,
+      paginationInfo: paginationAnalysis
+    },
     analyzedAt: new Date().toISOString()
   };
-  
+
   return result;
+}
+
+async function performMultiPageScraping(url: string, options: ScrapingOptions, startTime: number): Promise<ScrapingResult> {
+  console.log(`Starting multi-page scraping for ${url} (max pages: ${options.maxPages})`);
+  
+  // First, analyze the initial page for pagination patterns
+  const initialResponse = await fetch(url, {
+    headers: {
+      'User-Agent': options.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    },
+    signal: AbortSignal.timeout(25000)
+  });
+
+  if (!initialResponse.ok) {
+    throw new Error(`HTTP ${initialResponse.status}: ${initialResponse.statusText}`);
+  }
+
+  const initialContent = await initialResponse.text();
+  const $ = cheerio.load(initialContent);
+  
+  // Analyze pagination patterns
+  const paginationAnalysis = analyzePaginationPatterns($, url);
+  
+  // If pagination is detected, crawl multiple pages
+  if (paginationAnalysis.pagination.type !== 'none' || paginationAnalysis.infiniteScroll.hasInfiniteScroll) {
+    console.log(`Detected pagination patterns: ${paginationAnalysis.detectedPatterns.join(', ')}`);
+    
+    // Crawl paginated content
+    const paginatedResults = await crawlPagination(
+      url, 
+      options.maxPages, 
+      options.crawlDelay || 1000
+    );
+    
+    // Combine content from all pages
+    const combinedContent = paginatedResults.map(r => r.content).join('\n');
+    const combined$ = cheerio.load(combinedContent);
+    
+    // Extract data from combined content
+    const extractedData = await extractData(combined$, combinedContent, options.extractionOptions);
+    
+    // Generate comprehensive analysis
+    const title = $('title').text() || 'No title found';
+    const description = $('meta[name="description"]').attr('content') || 'No description found';
+    const technologies = detectTechnologies($, initialContent);
+    const languages = detectProgrammingLanguages($, initialContent);
+    const performance = analyzePerformanceWithAI(Date.now() - startTime, combinedContent);
+    const seo = analyzeSEOWithAI($, initialContent);
+    const aiInsights = generateAIInsights(combinedContent, technologies, performance);
+    const recommendations = generateIntelligentRecommendations(technologies, performance, seo, aiInsights);
+    
+    // Add pagination-specific data
+    const paginationData = {
+      totalPagesCrawled: paginatedResults.length,
+      pages: paginatedResults.map(r => ({
+        url: r.url,
+        page: r.page,
+        contentLength: r.content.length
+      })),
+      paginationPatterns: paginationAnalysis.detectedPatterns,
+      paginationType: paginationAnalysis.pagination.type,
+      infiniteScrollDetected: paginationAnalysis.infiniteScroll.hasInfiniteScroll
+    };
+    
+    return {
+      url,
+      title,
+      description,
+      technologies,
+      languages,
+      performance,
+      seo,
+      recommendations,
+      aiInsights,
+      extractedData: {
+        ...extractedData,
+        paginationInfo: paginationAnalysis,
+        paginationData
+      },
+      analyzedAt: new Date().toISOString()
+    };
+  } else {
+    // No pagination detected, fall back to single page scraping
+    console.log('No pagination patterns detected, performing single page scraping');
+    return await performSinglePageScraping(url, options, startTime);
+  }
 }
 
 function detectTechnologies($: cheerio.Root, content: string): string[] {
