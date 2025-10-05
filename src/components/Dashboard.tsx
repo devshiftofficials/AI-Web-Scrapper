@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search, 
@@ -17,7 +17,27 @@ import {
   Target,
   Brain,
   Layers,
-  Activity
+  Activity,
+  Settings,
+  Play,
+  Pause,
+  History,
+  Monitor,
+  Database,
+  FileText,
+  Link,
+  Image,
+  Table,
+  Schema,
+  Robot,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  X,
+  Plus,
+  Minus
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { generatePDFReport, generateJSONReport } from '@/utils/pdfGenerator';
@@ -50,7 +70,45 @@ interface ScrapingResult {
     accessibility: string;
     security: string;
   };
+  extractedData?: {
+    text?: string;
+    links?: Array<{ url: string; text: string; }>;
+    images?: Array<{ src: string; alt: string; }>;
+    metaTags?: Record<string, string>;
+    tables?: Array<{ headers: string[]; rows: string[][]; }>;
+    structuredData?: any;
+    customData?: Record<string, any>;
+  };
   analyzedAt: string;
+}
+
+interface ScrapingJob {
+  id: string;
+  url: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  result?: ScrapingResult;
+  error?: string;
+}
+
+interface ScrapingOptions {
+  depth: number;
+  maxPages: number;
+  respectRobots: boolean;
+  extractionOptions: {
+    text: boolean;
+    links: boolean;
+    images: boolean;
+    metaTags: boolean;
+    tables: boolean;
+    structuredData: boolean;
+    customSchema?: Record<string, string>;
+  };
+  crawlDelay?: number;
+  userAgent?: string;
 }
 
 export default function Dashboard() {
@@ -58,21 +116,87 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ScrapingResult | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
+  
+  // New state for enhanced features
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [scrapingOptions, setScrapingOptions] = useState<ScrapingOptions>({
+    depth: 0,
+    maxPages: 1,
+    respectRobots: true,
+    extractionOptions: {
+      text: false,
+      links: false,
+      images: false,
+      metaTags: false,
+      tables: false,
+      structuredData: false,
+    },
+    crawlDelay: 1000,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  });
+  
+  const [jobs, setJobs] = useState<ScrapingJob[]>([]);
+  const [activeJob, setActiveJob] = useState<ScrapingJob | null>(null);
+  const [showJobHistory, setShowJobHistory] = useState(false);
+  const [customSchemaFields, setCustomSchemaFields] = useState<Array<{name: string, selector: string}>>([]);
+  const [showTermsOfUse, setShowTermsOfUse] = useState(false);
 
-  const handleScrape = async () => {
+  // Load job history on component mount
+  useEffect(() => {
+    loadJobHistory();
+  }, []);
+
+  const loadJobHistory = async () => {
+    try {
+      const response = await fetch('/api/scraper/jobs');
+      const data = await response.json();
+      if (response.ok) {
+        setJobs(data.jobs || []);
+      }
+    } catch (error) {
+      console.error('Failed to load job history:', error);
+    }
+  };
+
+  const handleScrape = async (background = false) => {
     if (!url) {
       toast.error('Please enter a URL');
       return;
     }
 
+    // Validate URL
+    try {
+      new URL(url);
+    } catch {
+      toast.error('Please enter a valid URL');
+      return;
+    }
+
     setIsLoading(true);
     try {
+      // Prepare custom schema if fields are defined
+      const options = { ...scrapingOptions };
+      if (customSchemaFields.length > 0) {
+        const customSchema: Record<string, string> = {};
+        customSchemaFields.forEach(field => {
+          if (field.name && field.selector) {
+            customSchema[field.name] = field.selector;
+          }
+        });
+        options.extractionOptions.customSchema = customSchema;
+      }
+
       const response = await fetch('/api/scraper/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ 
+          url, 
+          options,
+          background,
+          userId: 'user_' + Date.now() // Simple user ID for demo
+        }),
       });
 
       const data = await response.json();
@@ -81,8 +205,22 @@ export default function Dashboard() {
         throw new Error(data.error || 'Failed to analyze website');
       }
 
-      setResult(data);
-      toast.success('Website analyzed successfully with AI!');
+      if (background) {
+        // Background job started
+        toast.success('Scraping job started in background!');
+        setActiveJob({ 
+          id: data.jobId, 
+          url, 
+          status: 'pending', 
+          progress: 0, 
+          createdAt: new Date().toISOString() 
+        });
+        loadJobHistory(); // Refresh job list
+      } else {
+        // Immediate result
+        setResult(data);
+        toast.success('Website analyzed successfully with AI!');
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to analyze website. Please try again.';
       toast.error(errorMessage);
@@ -91,6 +229,36 @@ export default function Dashboard() {
       setIsLoading(false);
     }
   };
+
+  const checkJobStatus = async (jobId: string) => {
+    try {
+      const response = await fetch(`/api/scraper/status/${jobId}`);
+      const job = await response.json();
+      
+      if (response.ok) {
+        setActiveJob(job);
+        if (job.status === 'completed' && job.result) {
+          setResult(job.result);
+          toast.success('Background scraping completed!');
+        } else if (job.status === 'failed') {
+          toast.error(`Scraping failed: ${job.error}`);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check job status:', error);
+    }
+  };
+
+  // Poll job status if there's an active job
+  useEffect(() => {
+    if (activeJob && (activeJob.status === 'pending' || activeJob.status === 'running')) {
+      const interval = setInterval(() => {
+        checkJobStatus(activeJob.id);
+      }, 2000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [activeJob]);
 
   const downloadPDF = () => {
     if (!result) return;
@@ -120,12 +288,48 @@ export default function Dashboard() {
     return 'text-red-400 bg-red-400/20';
   };
 
+  const addCustomSchemaField = () => {
+    setCustomSchemaFields([...customSchemaFields, { name: '', selector: '' }]);
+  };
+
+  const removeCustomSchemaField = (index: number) => {
+    setCustomSchemaFields(customSchemaFields.filter((_, i) => i !== index));
+  };
+
+  const updateCustomSchemaField = (index: number, field: 'name' | 'selector', value: string) => {
+    const updated = [...customSchemaFields];
+    updated[index][field] = value;
+    setCustomSchemaFields(updated);
+  };
+
+  const getJobStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'text-green-400 bg-green-400/20';
+      case 'running': return 'text-blue-400 bg-blue-400/20';
+      case 'pending': return 'text-yellow-400 bg-yellow-400/20';
+      case 'failed': return 'text-red-400 bg-red-400/20';
+      default: return 'text-gray-400 bg-gray-400/20';
+    }
+  };
+
+  const getJobStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed': return CheckCircle;
+      case 'running': return Loader2;
+      case 'pending': return Clock;
+      case 'failed': return X;
+      default: return Clock;
+    }
+  };
+
   const tabs = [
     { id: 'overview', name: 'Overview', icon: Globe },
     { id: 'performance', name: 'Performance', icon: Zap },
     { id: 'technologies', name: 'Technologies', icon: Code },
     { id: 'seo', name: 'SEO Analysis', icon: Target },
     { id: 'ai', name: 'AI Insights', icon: Brain },
+    { id: 'extracted', name: 'Extracted Data', icon: Database },
+    { id: 'jobs', name: 'Job History', icon: History },
   ];
 
   return (
@@ -170,7 +374,7 @@ export default function Dashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.6 }}
-          className="max-w-4xl mx-auto mb-12"
+          className="max-w-6xl mx-auto mb-12"
         >
           <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 shadow-2xl">
             <div className="flex flex-col md:flex-row gap-4">
@@ -186,30 +390,245 @@ export default function Dashboard() {
                   />
                 </div>
               </div>
+              <div className="flex gap-2">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => handleScrape(false)}
+                  disabled={isLoading}
+                  className="px-6 py-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-xl font-semibold hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2 shadow-lg"
+                >
+                  {isLoading ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        className="rounded-full h-4 w-4 border-2 border-white border-t-transparent"
+                      />
+                      <span>Analyzing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="h-4 w-4" />
+                      <span>Analyze Now</span>
+                    </>
+                  )}
+                </motion.button>
+                
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => handleScrape(true)}
+                  disabled={isLoading}
+                  className="px-6 py-4 bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-xl font-semibold hover:from-green-600 hover:to-teal-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2 shadow-lg"
+                >
+                  <Play className="h-4 w-4" />
+                  <span>Background</span>
+                </motion.button>
+              </div>
+            </div>
+
+            {/* Advanced Options Toggle */}
+            <div className="mt-4 flex items-center justify-between">
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={handleScrape}
-                disabled={isLoading}
-                className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-xl font-semibold hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-3 shadow-lg"
+                onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                className="flex items-center space-x-2 text-gray-300 hover:text-white transition-colors duration-200"
               >
-                {isLoading ? (
-                  <>
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                      className="rounded-full h-5 w-5 border-2 border-white border-t-transparent"
-                    />
-                    <span>AI Analyzing...</span>
-                  </>
-                ) : (
-                  <>
-                    <Brain className="h-5 w-5" />
-                    <span>Analyze with AI</span>
-                  </>
-                )}
+                <Settings className="h-4 w-4" />
+                <span>Advanced Options</span>
+                {showAdvancedOptions ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </motion.button>
+              
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setShowTermsOfUse(true)}
+                className="text-sm text-gray-400 hover:text-white transition-colors duration-200"
+              >
+                Terms of Use
               </motion.button>
             </div>
+
+            {/* Advanced Options Panel */}
+            <AnimatePresence>
+              {showAdvancedOptions && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mt-6 space-y-6"
+                >
+                  {/* Crawling Options */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-300 mb-2">Crawl Depth</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        value={scrapingOptions.depth}
+                        onChange={(e) => setScrapingOptions({...scrapingOptions, depth: parseInt(e.target.value) || 0})}
+                        className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-300 mb-2">Max Pages</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="1000"
+                        value={scrapingOptions.maxPages}
+                        onChange={(e) => setScrapingOptions({...scrapingOptions, maxPages: parseInt(e.target.value) || 1})}
+                        className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-300 mb-2">Crawl Delay (ms)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10000"
+                        value={scrapingOptions.crawlDelay}
+                        onChange={(e) => setScrapingOptions({...scrapingOptions, crawlDelay: parseInt(e.target.value) || 1000})}
+                        className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Respect Robots.txt */}
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={() => setScrapingOptions({...scrapingOptions, respectRobots: !scrapingOptions.respectRobots})}
+                      className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors duration-200 ${
+                        scrapingOptions.respectRobots 
+                          ? 'bg-green-500/20 text-green-300' 
+                          : 'bg-red-500/20 text-red-300'
+                      }`}
+                    >
+                      {scrapingOptions.respectRobots ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                      <span>Respect robots.txt</span>
+                    </button>
+                  </div>
+
+                  {/* Data Extraction Options */}
+                  <div>
+                    <h4 className="text-lg font-semibold text-white mb-4">Data Extraction Options</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {[
+                        { key: 'text', label: 'Text Content', icon: FileText },
+                        { key: 'links', label: 'Links', icon: Link },
+                        { key: 'images', label: 'Images', icon: Image },
+                        { key: 'metaTags', label: 'Meta Tags', icon: Schema },
+                        { key: 'tables', label: 'Tables', icon: Table },
+                        { key: 'structuredData', label: 'Structured Data', icon: Database },
+                      ].map((option) => {
+                        const Icon = option.icon;
+                        return (
+                          <motion.button
+                            key={option.key}
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => setScrapingOptions({
+                              ...scrapingOptions,
+                              extractionOptions: {
+                                ...scrapingOptions.extractionOptions,
+                                [option.key]: !scrapingOptions.extractionOptions[option.key as keyof typeof scrapingOptions.extractionOptions]
+                              }
+                            })}
+                            className={`flex items-center space-x-2 px-4 py-3 rounded-lg transition-colors duration-200 ${
+                              scrapingOptions.extractionOptions[option.key as keyof typeof scrapingOptions.extractionOptions]
+                                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                                : 'bg-white/5 text-gray-300 border border-white/10'
+                            }`}
+                          >
+                            <Icon className="h-4 w-4" />
+                            <span className="text-sm">{option.label}</span>
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Custom Schema Fields */}
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-lg font-semibold text-white">Custom Schema Extractor</h4>
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={addCustomSchemaField}
+                        className="flex items-center space-x-2 px-3 py-2 bg-purple-500/20 text-purple-300 rounded-lg hover:bg-purple-500/30 transition-colors duration-200"
+                      >
+                        <Plus className="h-4 w-4" />
+                        <span>Add Field</span>
+                      </motion.button>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      {customSchemaFields.map((field, index) => (
+                        <div key={index} className="flex items-center space-x-3">
+                          <input
+                            type="text"
+                            placeholder="Field name (e.g., product_name)"
+                            value={field.name}
+                            onChange={(e) => updateCustomSchemaField(index, 'name', e.target.value)}
+                            className="flex-1 px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <input
+                            type="text"
+                            placeholder="CSS selector (e.g., .product-title)"
+                            value={field.selector}
+                            onChange={(e) => updateCustomSchemaField(index, 'selector', e.target.value)}
+                            className="flex-1 px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => removeCustomSchemaField(index)}
+                            className="p-2 bg-red-500/20 text-red-300 rounded-lg hover:bg-red-500/30 transition-colors duration-200"
+                          >
+                            <Minus className="h-4 w-4" />
+                          </motion.button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Active Job Progress */}
+            <AnimatePresence>
+              {activeJob && (activeJob.status === 'pending' || activeJob.status === 'running') && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="mt-6 bg-blue-500/10 border border-blue-500/30 rounded-xl p-4"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center space-x-2">
+                      <Loader2 className="h-4 w-4 text-blue-400 animate-spin" />
+                      <span className="text-blue-300 font-medium">
+                        {activeJob.status === 'pending' ? 'Queued' : 'Processing'} Job
+                      </span>
+                    </div>
+                    <span className="text-blue-300 text-sm">{activeJob.progress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${activeJob.progress}%` }}
+                      transition={{ duration: 0.5 }}
+                      className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full"
+                    />
+                  </div>
+                  <p className="text-gray-400 text-sm mt-2 truncate">{activeJob.url}</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
             
             {/* Quick Stats */}
             <motion.div
@@ -630,6 +1049,218 @@ export default function Dashboard() {
                         </div>
                       </motion.div>
                     )}
+
+                    {activeTab === 'extracted' && (
+                      <motion.div
+                        key="extracted"
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        className="space-y-6"
+                      >
+                        <h3 className="text-2xl font-semibold text-white mb-6 flex items-center space-x-2">
+                          <Database className="h-6 w-6 text-purple-400" />
+                          <span>Extracted Data</span>
+                        </h3>
+                        
+                        {result?.extractedData ? (
+                          <div className="space-y-6">
+                            {/* Text Content */}
+                            {result.extractedData.text && (
+                              <div className="bg-white/5 rounded-xl p-6">
+                                <h4 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
+                                  <FileText className="h-5 w-5 text-blue-400" />
+                                  <span>Text Content</span>
+                                </h4>
+                                <div className="bg-gray-800 rounded-lg p-4 max-h-60 overflow-y-auto">
+                                  <p className="text-gray-300 text-sm whitespace-pre-wrap">
+                                    {result.extractedData.text.substring(0, 1000)}
+                                    {result.extractedData.text.length > 1000 && '...'}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Links */}
+                            {result.extractedData.links && result.extractedData.links.length > 0 && (
+                              <div className="bg-white/5 rounded-xl p-6">
+                                <h4 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
+                                  <Link className="h-5 w-5 text-green-400" />
+                                  <span>Links ({result.extractedData.links.length})</span>
+                                </h4>
+                                <div className="space-y-2 max-h-60 overflow-y-auto">
+                                  {result.extractedData.links.slice(0, 20).map((link, index) => (
+                                    <div key={index} className="flex items-center space-x-3 p-2 bg-gray-800 rounded-lg">
+                                      <span className="text-gray-400 text-sm w-8">{index + 1}</span>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-white text-sm truncate">{link.text}</p>
+                                        <p className="text-gray-400 text-xs truncate">{link.url}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {result.extractedData.links.length > 20 && (
+                                    <p className="text-gray-400 text-sm text-center">
+                                      ... and {result.extractedData.links.length - 20} more links
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Images */}
+                            {result.extractedData.images && result.extractedData.images.length > 0 && (
+                              <div className="bg-white/5 rounded-xl p-6">
+                                <h4 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
+                                  <Image className="h-5 w-5 text-yellow-400" />
+                                  <span>Images ({result.extractedData.images.length})</span>
+                                </h4>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-h-60 overflow-y-auto">
+                                  {result.extractedData.images.slice(0, 12).map((image, index) => (
+                                    <div key={index} className="bg-gray-800 rounded-lg p-3">
+                                      <div className="aspect-square bg-gray-700 rounded-lg mb-2 flex items-center justify-center">
+                                        <Image className="h-8 w-8 text-gray-400" />
+                                      </div>
+                                      <p className="text-white text-xs truncate">{image.alt || 'No alt text'}</p>
+                                      <p className="text-gray-400 text-xs truncate">{image.src}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Custom Data */}
+                            {result.extractedData.customData && Object.keys(result.extractedData.customData).length > 0 && (
+                              <div className="bg-white/5 rounded-xl p-6">
+                                <h4 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
+                                  <Schema className="h-5 w-5 text-purple-400" />
+                                  <span>Custom Schema Data</span>
+                                </h4>
+                                <div className="space-y-3">
+                                  {Object.entries(result.extractedData.customData).map(([key, value], index) => (
+                                    <div key={index} className="bg-gray-800 rounded-lg p-4">
+                                      <h5 className="text-white font-medium mb-2">{key}</h5>
+                                      <p className="text-gray-300 text-sm">
+                                        {typeof value === 'string' ? value : JSON.stringify(value)}
+                                      </p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-center py-12">
+                            <Database className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                            <p className="text-gray-400">No extracted data available. Enable data extraction options to see results here.</p>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+
+                    {activeTab === 'jobs' && (
+                      <motion.div
+                        key="jobs"
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        className="space-y-6"
+                      >
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-2xl font-semibold text-white flex items-center space-x-2">
+                            <History className="h-6 w-6 text-blue-400" />
+                            <span>Job History</span>
+                          </h3>
+                          <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={loadJobHistory}
+                            className="px-4 py-2 bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors duration-200"
+                          >
+                            Refresh
+                          </motion.button>
+                        </div>
+                        
+                        {jobs.length > 0 ? (
+                          <div className="space-y-4">
+                            {jobs.map((job, index) => {
+                              const StatusIcon = getJobStatusIcon(job.status);
+                              return (
+                                <motion.div
+                                  key={job.id}
+                                  initial={{ opacity: 0, y: 20 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: index * 0.1 }}
+                                  className="bg-white/5 rounded-xl p-6 border border-white/10"
+                                >
+                                  <div className="flex items-center justify-between mb-4">
+                                    <div className="flex items-center space-x-3">
+                                      <StatusIcon className={`h-5 w-5 ${getJobStatusColor(job.status).split(' ')[0]}`} />
+                                      <div>
+                                        <h4 className="text-white font-medium">{job.url}</h4>
+                                        <p className="text-gray-400 text-sm">
+                                          {new Date(job.createdAt).toLocaleString()}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${getJobStatusColor(job.status)}`}>
+                                        {job.status}
+                                      </span>
+                                      {job.status === 'running' && (
+                                        <span className="text-blue-300 text-sm">{job.progress}%</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  
+                                  {job.status === 'running' && (
+                                    <div className="w-full bg-gray-700 rounded-full h-2 mb-4">
+                                      <motion.div
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${job.progress}%` }}
+                                        transition={{ duration: 0.5 }}
+                                        className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full"
+                                      />
+                                    </div>
+                                  )}
+                                  
+                                  {job.status === 'completed' && job.result && (
+                                    <div className="flex items-center space-x-4">
+                                      <motion.button
+                                        whileHover={{ scale: 1.05 }}
+                                        whileTap={{ scale: 0.95 }}
+                                        onClick={() => setResult(job.result!)}
+                                        className="px-4 py-2 bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors duration-200"
+                                      >
+                                        View Results
+                                      </motion.button>
+                                      <motion.button
+                                        whileHover={{ scale: 1.05 }}
+                                        whileTap={{ scale: 0.95 }}
+                                        onClick={() => generatePDFReport(job.result!)}
+                                        className="px-4 py-2 bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors duration-200"
+                                      >
+                                        Download PDF
+                                      </motion.button>
+                                    </div>
+                                  )}
+                                  
+                                  {job.status === 'failed' && job.error && (
+                                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                                      <p className="text-red-300 text-sm">{job.error}</p>
+                                    </div>
+                                  )}
+                                </motion.div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-center py-12">
+                            <History className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                            <p className="text-gray-400">No job history available. Start a background scraping job to see it here.</p>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
                   </AnimatePresence>
                 </div>
               </div>
@@ -637,6 +1268,80 @@ export default function Dashboard() {
           )}
         </AnimatePresence>
       </motion.section>
+
+      {/* Terms of Use Modal */}
+      <AnimatePresence>
+        {showTermsOfUse && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-gray-900 rounded-2xl p-8 max-w-2xl w-full max-h-[80vh] overflow-y-auto border border-white/20"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-white">Terms of Use</h2>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowTermsOfUse(false)}
+                  className="p-2 bg-white/10 rounded-lg hover:bg-white/20 transition-colors duration-200"
+                >
+                  <X className="h-5 w-5 text-white" />
+                </motion.button>
+              </div>
+
+              <div className="space-y-6 text-gray-300">
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-3">Legal Boundaries</h3>
+                  <ul className="space-y-2 text-sm">
+                    <li>• Only scrape publicly available websites</li>
+                    <li>• Respect robots.txt files and website terms of service</li>
+                    <li>• Do not scrape personal or sensitive information</li>
+                    <li>• Comply with applicable laws and regulations (GDPR, CCPA, etc.)</li>
+                    <li>• Use reasonable crawl delays to avoid overwhelming servers</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-3">Prohibited Uses</h3>
+                  <ul className="space-y-2 text-sm">
+                    <li>• Scraping copyrighted content without permission</li>
+                    <li>• Automated attacks or denial of service</li>
+                    <li>• Scraping login-protected or private content</li>
+                    <li>• Commercial use without proper licensing</li>
+                    <li>• Violating website terms of service</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-3">User Responsibility</h3>
+                  <p className="text-sm">
+                    You are responsible for ensuring your scraping activities comply with all applicable laws and website terms of service. 
+                    This tool is provided for educational and research purposes. Always obtain proper permissions before scraping any website.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end space-x-4 pt-6 border-t border-white/10">
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setShowTermsOfUse(false)}
+                    className="px-6 py-3 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors duration-200"
+                  >
+                    I Understand
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

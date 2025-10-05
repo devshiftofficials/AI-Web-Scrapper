@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
+import { checkRobotsTxt, isPathAllowed } from '../../../../utils/robotsTxt';
+import { 
+  validateUrl, 
+  validateDepth, 
+  validateMaxPages, 
+  validateExtractionOptions,
+  validateCustomSchema,
+  sanitizeInput 
+} from '../../../../utils/validation';
+import { ScrapingOptions, ScrapingResult } from '../../../../utils/jobQueue';
 
 // AI/ML enhanced analysis functions
 interface AnalysisResult {
@@ -35,78 +45,99 @@ interface AnalysisResult {
 
 export async function POST(request: NextRequest) {
   try {
-    const { url } = await request.json();
+    const body = await request.json();
+    const { 
+      url, 
+      options = {},
+      background = false,
+      userId 
+    } = body;
 
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
 
-    // Validate URL
-    try {
-      new URL(url);
-    } catch {
-      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
+    // Validate and sanitize URL
+    const urlValidation = validateUrl(url);
+    if (!urlValidation.isValid) {
+      return NextResponse.json({ error: urlValidation.error }, { status: 400 });
     }
+    const sanitizedUrl = urlValidation.sanitizedValue!;
 
-    // Measure performance
-    const startTime = Date.now();
-    
-    // Fetch the page content using server-side fetch
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
+    // Validate scraping options
+    const scrapingOptions: ScrapingOptions = {
+      depth: options.depth || 0,
+      maxPages: options.maxPages || 1,
+      respectRobots: options.respectRobots !== false, // Default to true
+      extractionOptions: {
+        text: options.extractionOptions?.text || false,
+        links: options.extractionOptions?.links || false,
+        images: options.extractionOptions?.images || false,
+        metaTags: options.extractionOptions?.metaTags || false,
+        tables: options.extractionOptions?.tables || false,
+        structuredData: options.extractionOptions?.structuredData || false,
+        customSchema: options.extractionOptions?.customSchema
       },
-      // Add timeout for Vercel compatibility
-      signal: AbortSignal.timeout(25000) // 25 seconds timeout
-    });
+      crawlDelay: options.crawlDelay,
+      userAgent: options.userAgent
+    };
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    // Validate depth
+    const depthValidation = validateDepth(scrapingOptions.depth);
+    if (!depthValidation.isValid) {
+      return NextResponse.json({ error: depthValidation.error }, { status: 400 });
     }
 
-    const content = await response.text();
-    const loadTime = Date.now() - startTime;
-    
-    // Parse content with cheerio
-    const $ = cheerio.load(content);
-    
-    // Extract basic information
-    const title = $('title').text() || 'No title found';
-    const description = $('meta[name="description"]').attr('content') || 'No description found';
-    
-    // Detect technologies and languages
-    const technologies = detectTechnologies($, content);
-    const languages = detectProgrammingLanguages($, content);
-    
-    // Enhanced performance analysis with AI
-    const performance = analyzePerformanceWithAI(loadTime, content);
-    
-    // Enhanced SEO analysis
-    const seo = analyzeSEOWithAI($, content);
-    
-    // AI-powered insights
-    const aiInsights = generateAIInsights(content, technologies, performance);
-    
-    // Generate intelligent recommendations
-    const recommendations = generateIntelligentRecommendations(technologies, performance, seo, aiInsights);
-    
-    const result: AnalysisResult = {
-      url,
-      title,
-      description,
-      technologies,
-      languages,
-      performance,
-      seo,
-      recommendations,
-      aiInsights,
-      analyzedAt: new Date().toISOString()
-    };
+    // Validate max pages
+    const maxPagesValidation = validateMaxPages(scrapingOptions.maxPages);
+    if (!maxPagesValidation.isValid) {
+      return NextResponse.json({ error: maxPagesValidation.error }, { status: 400 });
+    }
+
+    // Validate extraction options
+    const extractionValidation = validateExtractionOptions(scrapingOptions.extractionOptions);
+    if (!extractionValidation.isValid) {
+      return NextResponse.json({ error: extractionValidation.error }, { status: 400 });
+    }
+
+    // Validate custom schema if provided
+    if (scrapingOptions.extractionOptions.customSchema) {
+      const schemaValidation = validateCustomSchema(scrapingOptions.extractionOptions.customSchema);
+      if (!schemaValidation.isValid) {
+        return NextResponse.json({ error: schemaValidation.error }, { status: 400 });
+      }
+    }
+
+    // Check robots.txt if required
+    if (scrapingOptions.respectRobots) {
+      const robotsResult = await checkRobotsTxt(sanitizedUrl);
+      if (!robotsResult.canCrawl) {
+        return NextResponse.json({ 
+          error: 'Crawling is not allowed by robots.txt. You can override this by setting respectRobots to false.',
+          robotsTxt: robotsResult
+        }, { status: 403 });
+      }
+      
+      // Apply crawl delay if specified
+      if (robotsResult.crawlDelay && robotsResult.crawlDelay > 0) {
+        scrapingOptions.crawlDelay = robotsResult.crawlDelay;
+      }
+    }
+
+    // If background processing is requested, add to job queue
+    if (background) {
+      const { jobQueue } = await import('../../../../utils/jobQueue');
+      const jobId = await jobQueue.addJob(sanitizedUrl, scrapingOptions, userId);
+      
+      return NextResponse.json({ 
+        jobId,
+        message: 'Scraping job started in background',
+        statusUrl: `/api/scraper/status/${jobId}`
+      });
+    }
+
+    // Perform the actual scraping
+    const result = await performScraping(sanitizedUrl, scrapingOptions);
     
     return NextResponse.json(result);
     
@@ -140,6 +171,74 @@ export async function POST(request: NextRequest) {
       { status: statusCode }
     );
   }
+}
+
+// Main scraping function that can be used by both direct calls and job queue
+export async function performScraping(url: string, options: ScrapingOptions): Promise<ScrapingResult> {
+  const startTime = Date.now();
+  
+  // Fetch the page content using server-side fetch
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': options.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+    },
+    // Add timeout for Vercel compatibility
+    signal: AbortSignal.timeout(25000) // 25 seconds timeout
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  const content = await response.text();
+  const loadTime = Date.now() - startTime;
+  
+  // Parse content with cheerio
+  const $ = cheerio.load(content);
+    
+  // Extract basic information
+  const title = $('title').text() || 'No title found';
+  const description = $('meta[name="description"]').attr('content') || 'No description found';
+  
+  // Detect technologies and languages
+  const technologies = detectTechnologies($, content);
+  const languages = detectProgrammingLanguages($, content);
+  
+  // Enhanced performance analysis with AI
+  const performance = analyzePerformanceWithAI(loadTime, content);
+  
+  // Enhanced SEO analysis
+  const seo = analyzeSEOWithAI($, content);
+  
+  // AI-powered insights
+  const aiInsights = generateAIInsights(content, technologies, performance);
+  
+  // Generate intelligent recommendations
+  const recommendations = generateIntelligentRecommendations(technologies, performance, seo, aiInsights);
+  
+  // Extract additional data based on options
+  const extractedData = await extractData($, content, options.extractionOptions);
+  
+  const result: ScrapingResult = {
+    url,
+    title,
+    description,
+    technologies,
+    languages,
+    performance,
+    seo,
+    recommendations,
+    aiInsights,
+    extractedData,
+    analyzedAt: new Date().toISOString()
+  };
+  
+  return result;
 }
 
 function detectTechnologies($: cheerio.Root, content: string): string[] {
@@ -575,4 +674,126 @@ function generateIntelligentRecommendations(
   }
   
   return recommendations.slice(0, 6); // Limit to 6 recommendations
+}
+
+// Data extraction function based on user options
+async function extractData($: cheerio.Root, content: string, options: any): Promise<any> {
+  const extractedData: any = {};
+
+  try {
+    // Extract text content
+    if (options.text) {
+      extractedData.text = $('body').text().trim();
+    }
+
+    // Extract links
+    if (options.links) {
+      const links: Array<{ url: string; text: string; }> = [];
+      $('a[href]').each((_, element) => {
+        const href = $(element).attr('href');
+        const text = $(element).text().trim();
+        if (href && text) {
+          links.push({ url: href, text });
+        }
+      });
+      extractedData.links = links;
+    }
+
+    // Extract images
+    if (options.images) {
+      const images: Array<{ src: string; alt: string; }> = [];
+      $('img').each((_, element) => {
+        const src = $(element).attr('src');
+        const alt = $(element).attr('alt') || '';
+        if (src) {
+          images.push({ src, alt });
+        }
+      });
+      extractedData.images = images;
+    }
+
+    // Extract meta tags
+    if (options.metaTags) {
+      const metaTags: Record<string, string> = {};
+      $('meta').each((_, element) => {
+        const name = $(element).attr('name') || $(element).attr('property');
+        const content = $(element).attr('content');
+        if (name && content) {
+          metaTags[name] = content;
+        }
+      });
+      extractedData.metaTags = metaTags;
+    }
+
+    // Extract tables
+    if (options.tables) {
+      const tables: Array<{ headers: string[]; rows: string[][]; }> = [];
+      $('table').each((_, tableElement) => {
+        const headers: string[] = [];
+        const rows: string[][] = [];
+
+        // Extract headers
+        $(tableElement).find('th').each((_, th) => {
+          headers.push($(th).text().trim());
+        });
+
+        // Extract rows
+        $(tableElement).find('tr').each((_, tr) => {
+          const row: string[] = [];
+          $(tr).find('td').each((_, td) => {
+            row.push($(td).text().trim());
+          });
+          if (row.length > 0) {
+            rows.push(row);
+          }
+        });
+
+        if (headers.length > 0 || rows.length > 0) {
+          tables.push({ headers, rows });
+        }
+      });
+      extractedData.tables = tables;
+    }
+
+    // Extract structured data (JSON-LD)
+    if (options.structuredData) {
+      const structuredData: any[] = [];
+      $('script[type="application/ld+json"]').each((_, element) => {
+        try {
+          const jsonContent = $(element).html();
+          if (jsonContent) {
+            const parsed = JSON.parse(jsonContent);
+            structuredData.push(parsed);
+          }
+        } catch (error) {
+          console.warn('Failed to parse JSON-LD:', error);
+        }
+      });
+      extractedData.structuredData = structuredData;
+    }
+
+    // Extract custom schema data
+    if (options.customSchema) {
+      const customData: Record<string, any> = {};
+      for (const [fieldName, selector] of Object.entries(options.customSchema)) {
+        try {
+          const elements = $(selector as string);
+          if (elements.length === 1) {
+            customData[fieldName] = elements.text().trim();
+          } else if (elements.length > 1) {
+            customData[fieldName] = elements.map((_, el) => $(el).text().trim()).get();
+          }
+        } catch (error) {
+          console.warn(`Failed to extract field "${fieldName}" with selector "${selector}":`, error);
+          customData[fieldName] = null;
+        }
+      }
+      extractedData.customData = customData;
+    }
+
+  } catch (error) {
+    console.error('Error extracting data:', error);
+  }
+
+  return extractedData;
 }
