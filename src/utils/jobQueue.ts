@@ -8,7 +8,7 @@ export interface ScrapingJob {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
-  result?: any;
+  result?: ScrapingResult;
   error?: string;
   userId?: string;
 }
@@ -64,8 +64,8 @@ export interface ScrapingResult {
     images?: Array<{ src: string; alt: string; }>;
     metaTags?: Record<string, string>;
     tables?: Array<{ headers: string[]; rows: string[][]; }>;
-    structuredData?: any;
-    customData?: Record<string, any>;
+    structuredData?: Record<string, unknown>[];
+    customData?: Record<string, string | string[]>;
   };
   analyzedAt: string;
 }
@@ -148,11 +148,11 @@ class JobQueue {
       job.progress = 10;
 
       // Import the scraping function dynamically to avoid circular dependencies
-      const { performScraping } = await import('../app/api/scraper/analyze/route');
+      const { performScraping } = await import('./scraper');
       
       job.progress = 30;
       
-      const result = await performScraping(job.url, job.options);
+      const result: ScrapingResult = await performScraping(job.url, job.options);
       
       job.progress = 90;
       job.result = result;

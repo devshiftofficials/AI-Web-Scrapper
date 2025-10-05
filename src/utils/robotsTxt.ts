@@ -46,7 +46,7 @@ export async function checkRobotsTxt(url: string): Promise<RobotsTxtResult> {
   }
 }
 
-function parseRobotsTxt(content: string, hostname: string): RobotsTxtResult {
+function parseRobotsTxt(content: string, _hostname: string): RobotsTxtResult {
   const lines = content.split('\n').map(line => line.trim());
   const rules: RobotsTxtRule[] = [];
   let currentRule: Partial<RobotsTxtRule> = {};

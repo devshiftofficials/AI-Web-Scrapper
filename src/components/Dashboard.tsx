@@ -20,16 +20,13 @@ import {
   Activity,
   Settings,
   Play,
-  Pause,
   History,
-  Monitor,
   Database,
   FileText,
   Link,
   Image,
   Table,
-  Schema,
-  Robot,
+  FileCode,
   Eye,
   EyeOff,
   ChevronDown,
@@ -76,8 +73,8 @@ interface ScrapingResult {
     images?: Array<{ src: string; alt: string; }>;
     metaTags?: Record<string, string>;
     tables?: Array<{ headers: string[]; rows: string[][]; }>;
-    structuredData?: any;
-    customData?: Record<string, any>;
+    structuredData?: Record<string, unknown>[];
+    customData?: Record<string, string | string[]>;
   };
   analyzedAt: string;
 }
@@ -137,7 +134,6 @@ export default function Dashboard() {
   
   const [jobs, setJobs] = useState<ScrapingJob[]>([]);
   const [activeJob, setActiveJob] = useState<ScrapingJob | null>(null);
-  const [showJobHistory, setShowJobHistory] = useState(false);
   const [customSchemaFields, setCustomSchemaFields] = useState<Array<{name: string, selector: string}>>([]);
   const [showTermsOfUse, setShowTermsOfUse] = useState(false);
 
@@ -520,7 +516,7 @@ export default function Dashboard() {
                         { key: 'text', label: 'Text Content', icon: FileText },
                         { key: 'links', label: 'Links', icon: Link },
                         { key: 'images', label: 'Images', icon: Image },
-                        { key: 'metaTags', label: 'Meta Tags', icon: Schema },
+                        { key: 'metaTags', label: 'Meta Tags', icon: FileCode },
                         { key: 'tables', label: 'Tables', icon: Table },
                         { key: 'structuredData', label: 'Structured Data', icon: Database },
                       ].map((option) => {
@@ -1132,7 +1128,7 @@ export default function Dashboard() {
                             {result.extractedData.customData && Object.keys(result.extractedData.customData).length > 0 && (
                               <div className="bg-white/5 rounded-xl p-6">
                                 <h4 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
-                                  <Schema className="h-5 w-5 text-purple-400" />
+                                  <FileCode className="h-5 w-5 text-purple-400" />
                                   <span>Custom Schema Data</span>
                                 </h4>
                                 <div className="space-y-3">

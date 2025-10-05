@@ -42,7 +42,7 @@ export function validateUrl(url: string): ValidationResult {
       isValid: true,
       sanitizedValue: sanitizedUrl
     };
-  } catch (error) {
+  } catch {
     return {
       isValid: false,
       error: 'Invalid URL format'
@@ -110,7 +110,7 @@ export function validateMaxPages(maxPages: number): ValidationResult {
   };
 }
 
-export function validateCustomSchema(schema: any): ValidationResult {
+export function validateCustomSchema(schema: Record<string, string>): ValidationResult {
   if (!schema || typeof schema !== 'object') {
     return {
       isValid: false,
@@ -161,7 +161,7 @@ export function validateCustomSchema(schema: any): ValidationResult {
   };
 }
 
-export function validateExtractionOptions(options: any): ValidationResult {
+export function validateExtractionOptions(options: Record<string, boolean | Record<string, string>>): ValidationResult {
   if (!options || typeof options !== 'object') {
     return {
       isValid: false,
