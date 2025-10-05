@@ -36,7 +36,7 @@ export default function Navbar() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-white">AI Web Scraper</h1>
-              <p className="text-xs text-gray-400 -mt-1">Powered by ML</p>
+              <p className="text-xs text-gray-400 -mt-1">Powered by DevShift</p>
             </div>
           </motion.div>
 

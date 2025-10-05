@@ -39,10 +39,10 @@ export default function Footer() {
   };
 
   const socialLinks = [
-    { name: 'GitHub', icon: Github, href: 'https://github.com', color: 'hover:text-gray-300' },
+    { name: 'GitHub', icon: Github, href: 'https://github.com/devshiftofficials', color: 'hover:text-gray-300' },
     { name: 'Twitter', icon: Twitter, href: 'https://twitter.com', color: 'hover:text-blue-400' },
     { name: 'LinkedIn', icon: Linkedin, href: 'https://linkedin.com', color: 'hover:text-blue-600' },
-    { name: 'Email', icon: Mail, href: 'mailto:contact@example.com', color: 'hover:text-red-400' },
+    { name: 'Email', icon: Mail, href: 'mailto:devshiftt@gmail.com', color: 'hover:text-red-400' },
   ];
 
   return (
@@ -68,7 +68,7 @@ export default function Footer() {
                 </div>
                 <div>
                   <h3 className="text-xl font-bold text-white">AI Web Scraper</h3>
-                  <p className="text-sm text-gray-400">Powered by Machine Learning</p>
+                  <p className="text-sm text-gray-400">Powered by DevShift</p>
                 </div>
               </div>
               <p className="text-gray-300 mb-6 max-w-md">
@@ -201,7 +201,7 @@ export default function Footer() {
               >
                 <Heart className="h-4 w-4 text-red-400" />
               </motion.div>
-              <span>using Next.js & AI</span>
+              <span>by DevShift</span>
             </div>
             
             <div className="flex items-center space-x-6 text-sm text-gray-400">
