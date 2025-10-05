@@ -1,0 +1,9 @@
+{
+  "functions": {
+    "src/app/api/scraper/analyze/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "regions": ["iad1"],
+  "framework": "nextjs"
+}

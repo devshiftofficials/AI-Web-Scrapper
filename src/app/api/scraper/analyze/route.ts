@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import puppeteer, { Page } from 'puppeteer';
 import * as cheerio from 'cheerio';
 
 // AI/ML enhanced analysis functions
@@ -35,9 +34,6 @@ interface AnalysisResult {
 }
 
 export async function POST(request: NextRequest) {
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
-  let page: Page | null = null;
-  
   try {
     const { url } = await request.json();
 
@@ -52,64 +48,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
     }
 
-    // Initialize browser with environment-specific settings
-    const browserOptions: {
-      headless: boolean;
-      args: string[];
-      executablePath?: string;
-    } = {
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor'
-      ]
-    };
-
-    // Add environment-specific configurations
-    if (process.env.VERCEL === '1') {
-      browserOptions.executablePath = '/usr/bin/chromium-browser';
-    } else if (process.env.NODE_ENV === 'development') {
-      // For development, try to use system Chrome if available
-      browserOptions.args.push('--single-process');
-    }
-    
-    try {
-      browser = await puppeteer.launch(browserOptions);
-      page = await browser.newPage();
-    } catch (puppeteerError) {
-      console.error('Puppeteer launch failed:', puppeteerError);
-      return NextResponse.json(
-        { 
-          error: 'Browser initialization failed. This might be due to system limitations. Please try again or contact support.' 
-        },
-        { status: 503 }
-      );
-    }
-    
-    // Set user agent
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    
     // Measure performance
     const startTime = Date.now();
     
-    // Navigate to the page
-    await page.goto(url, { 
-      waitUntil: 'networkidle2',
-      timeout: 30000 
+    // Fetch the page content using server-side fetch
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+      },
+      // Add timeout for Vercel compatibility
+      signal: AbortSignal.timeout(25000) // 25 seconds timeout
     });
-    
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const content = await response.text();
     const loadTime = Date.now() - startTime;
     
-    // Get page content
-    const content = await page.content();
+    // Parse content with cheerio
     const $ = cheerio.load(content);
     
     // Extract basic information
@@ -121,7 +84,7 @@ export async function POST(request: NextRequest) {
     const languages = detectProgrammingLanguages($, content);
     
     // Enhanced performance analysis with AI
-    const performance = await analyzePerformanceWithAI(page, loadTime);
+    const performance = analyzePerformanceWithAI(loadTime, content);
     
     // Enhanced SEO analysis
     const seo = analyzeSEOWithAI($, content);
@@ -131,10 +94,6 @@ export async function POST(request: NextRequest) {
     
     // Generate intelligent recommendations
     const recommendations = generateIntelligentRecommendations(technologies, performance, seo, aiInsights);
-    
-    if (browser) {
-      await browser.close();
-    }
     
     const result: AnalysisResult = {
       url,
@@ -173,15 +132,6 @@ export async function POST(request: NextRequest) {
         statusCode = 403;
       } else {
         errorMessage = `Analysis failed: ${error.message}`;
-      }
-    }
-    
-    // Ensure browser is closed even on error
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (closeError) {
-        console.error('Error closing browser:', closeError);
       }
     }
     
@@ -275,8 +225,8 @@ function detectProgrammingLanguages($: cheerio.Root, content: string): string[] 
   return [...new Set(languages)]; // Remove duplicates
 }
 
-// AI-enhanced performance analysis
-async function analyzePerformanceWithAI(page: Page, loadTime: number): Promise<{
+// AI-enhanced performance analysis (Vercel-compatible)
+function analyzePerformanceWithAI(loadTime: number, content: string): {
   loadTime: number;
   score: number;
   metrics: {
@@ -285,22 +235,19 @@ async function analyzePerformanceWithAI(page: Page, loadTime: number): Promise<{
     domContentLoaded: number;
     loadComplete: number;
   };
-}> {
+} {
   try {
-    // Get comprehensive performance metrics
-    const metrics = await page.evaluate(() => {
-      const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
-      const paintEntries = performance.getEntriesByType('paint');
-      
-      return {
-        domContentLoaded: navigation.domContentLoadedEventEnd - navigation.domContentLoadedEventStart,
-        loadComplete: navigation.loadEventEnd - navigation.loadEventStart,
-        firstPaint: paintEntries.find(entry => entry.name === 'first-paint')?.startTime || 0,
-        firstContentfulPaint: paintEntries.find(entry => entry.name === 'first-contentful-paint')?.startTime || 0,
-        totalBlockingTime: navigation.loadEventEnd - navigation.domContentLoadedEventEnd,
-        largestContentfulPaint: performance.getEntriesByType('largest-contentful-paint')[0]?.startTime || 0
-      };
-    });
+    // Estimate performance metrics based on content analysis
+    const contentSize = content.length;
+    const imageCount = (content.match(/<img[^>]*>/gi) || []).length;
+    const scriptCount = (content.match(/<script[^>]*>/gi) || []).length;
+    const cssCount = (content.match(/<link[^>]*rel=["']stylesheet["'][^>]*>/gi) || []).length;
+    
+    // Estimate metrics based on content complexity
+    const estimatedFirstPaint = Math.min(loadTime * 0.3, 2000);
+    const estimatedFirstContentfulPaint = Math.min(loadTime * 0.5, 3000);
+    const estimatedDomContentLoaded = Math.min(loadTime * 0.7, 4000);
+    const estimatedLoadComplete = loadTime;
     
     // AI-powered performance scoring algorithm
     let score = 100;
@@ -318,35 +265,52 @@ async function analyzePerformanceWithAI(page: Page, loadTime: number): Promise<{
       deductions.push('Moderate load time (>2s)');
     }
     
-    // First Contentful Paint analysis
-    if (metrics.firstContentfulPaint > 2500) {
+    // Content size analysis
+    if (contentSize > 1000000) { // > 1MB
+      score -= 15;
+      deductions.push('Large page size (>1MB)');
+    } else if (contentSize > 500000) { // > 500KB
+      score -= 8;
+      deductions.push('Moderate page size (>500KB)');
+    }
+    
+    // Resource count analysis
+    if (imageCount > 20) {
+      score -= 10;
+      deductions.push('High number of images (>20)');
+    }
+    if (scriptCount > 10) {
+      score -= 8;
+      deductions.push('High number of scripts (>10)');
+    }
+    if (cssCount > 5) {
+      score -= 5;
+      deductions.push('Multiple CSS files (>5)');
+    }
+    
+    // Estimated First Contentful Paint analysis
+    if (estimatedFirstContentfulPaint > 2500) {
       score -= 25;
-      deductions.push('Poor First Contentful Paint (>2.5s)');
-    } else if (metrics.firstContentfulPaint > 1800) {
+      deductions.push('Poor estimated First Contentful Paint (>2.5s)');
+    } else if (estimatedFirstContentfulPaint > 1800) {
       score -= 15;
-      deductions.push('Slow First Contentful Paint (>1.8s)');
+      deductions.push('Slow estimated First Contentful Paint (>1.8s)');
     }
     
-    // DOM Content Loaded analysis
-    if (metrics.domContentLoaded > 2000) {
+    // Estimated DOM Content Loaded analysis
+    if (estimatedDomContentLoaded > 2000) {
       score -= 20;
-      deductions.push('Slow DOM Content Loaded (>2s)');
-    }
-    
-    // Total Blocking Time analysis
-    if (metrics.totalBlockingTime > 300) {
-      score -= 15;
-      deductions.push('High Total Blocking Time (>300ms)');
+      deductions.push('Slow estimated DOM Content Loaded (>2s)');
     }
     
     return {
       loadTime,
       score: Math.max(0, score),
       metrics: {
-        firstPaint: metrics.firstPaint,
-        firstContentfulPaint: metrics.firstContentfulPaint,
-        domContentLoaded: metrics.domContentLoaded,
-        loadComplete: metrics.loadComplete
+        firstPaint: estimatedFirstPaint,
+        firstContentfulPaint: estimatedFirstContentfulPaint,
+        domContentLoaded: estimatedDomContentLoaded,
+        loadComplete: estimatedLoadComplete
       }
     };
   } catch (error) {
@@ -355,10 +319,10 @@ async function analyzePerformanceWithAI(page: Page, loadTime: number): Promise<{
       loadTime,
       score: Math.max(0, 100 - Math.floor(loadTime / 100)),
       metrics: {
-        firstPaint: 0,
-        firstContentfulPaint: 0,
-        domContentLoaded: 0,
-        loadComplete: 0
+        firstPaint: loadTime * 0.3,
+        firstContentfulPaint: loadTime * 0.5,
+        domContentLoaded: loadTime * 0.7,
+        loadComplete: loadTime
       }
     };
   }
