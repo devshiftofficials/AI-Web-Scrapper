@@ -190,7 +190,7 @@ export async function downloadImagesAsZip(
       failedDownloads,
       results
     };
-  } catch (error) {
+  } catch (_error) {
     return {
       totalImages: images.length,
       successfulDownloads,

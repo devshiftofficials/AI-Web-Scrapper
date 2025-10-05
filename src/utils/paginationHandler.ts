@@ -28,7 +28,7 @@ export interface PaginationResult {
   detectedPatterns: string[];
 }
 
-export function detectPagination($: cheerio.CheerioAPI, url: string): PaginationInfo {
+export function detectPagination($: cheerio.Root, url: string): PaginationInfo {
   const paginationInfo: PaginationInfo = { type: 'none' };
   
   // Common pagination selectors
@@ -46,7 +46,7 @@ export function detectPagination($: cheerio.CheerioAPI, url: string): Pagination
   ];
 
   // Look for pagination container
-  let paginationContainer: any = null;
+  let paginationContainer: ReturnType<typeof $> | null = null;
   for (const selector of paginationSelectors) {
     const container = $(selector);
     if (container.length > 0) {
@@ -70,18 +70,6 @@ export function detectPagination($: cheerio.CheerioAPI, url: string): Pagination
     'a:contains("Next")',
     'a:contains(">")',
     'a:contains("→")'
-  ];
-
-  const prevPageSelectors = [
-    'a[rel="prev"]',
-    'a[aria-label*="previous"]',
-    'a[title*="previous"]',
-    '.prev',
-    '.previous-page',
-    '.pagination-prev',
-    'a:contains("Previous")',
-    'a:contains("<")',
-    'a:contains("←")'
   ];
 
   // Check for next page
@@ -143,7 +131,7 @@ export function detectPagination($: cheerio.CheerioAPI, url: string): Pagination
   return paginationInfo;
 }
 
-export function detectInfiniteScroll($: cheerio.CheerioAPI): InfiniteScrollInfo {
+export function detectInfiniteScroll($: cheerio.Root): InfiniteScrollInfo {
   const infiniteScrollInfo: InfiniteScrollInfo = {
     hasInfiniteScroll: false,
     scrollTriggers: []
@@ -164,11 +152,9 @@ export function detectInfiniteScroll($: cheerio.CheerioAPI): InfiniteScrollInfo 
   ];
 
   // Look for infinite scroll containers
-  let infiniteScrollContainer: any = null;
   for (const selector of infiniteScrollIndicators) {
     const container = $(selector);
     if (container.length > 0) {
-      infiniteScrollContainer = container;
       infiniteScrollInfo.hasInfiniteScroll = true;
       break;
     }
@@ -255,7 +241,7 @@ export function detectInfiniteScroll($: cheerio.CheerioAPI): InfiniteScrollInfo 
   return infiniteScrollInfo;
 }
 
-export function detectLoadMoreButtons($: cheerio.CheerioAPI): Array<{
+export function detectLoadMoreButtons($: cheerio.Root): Array<{
   selector: string;
   text: string;
   href?: string;
@@ -291,7 +277,7 @@ export function detectLoadMoreButtons($: cheerio.CheerioAPI): Array<{
     buttons.each((_, element) => {
       const $el = $(element);
       loadMoreButtons.push({
-        selector: $el.prop('tagName').toLowerCase() + (element.className ? '.' + element.className.split(' ').join('.') : ''),
+        selector: $el.prop('tagName')?.toLowerCase() + ($el.attr('class') ? '.' + $el.attr('class')!.split(' ').join('.') : ''),
         text: $el.text().trim(),
         type: 'button'
       });
@@ -302,7 +288,7 @@ export function detectLoadMoreButtons($: cheerio.CheerioAPI): Array<{
     links.each((_, element) => {
       const $el = $(element);
       loadMoreButtons.push({
-        selector: 'a' + (element.className ? '.' + element.className.split(' ').join('.') : ''),
+        selector: 'a' + ($el.attr('class') ? '.' + $el.attr('class')!.split(' ').join('.') : ''),
         text: $el.text().trim(),
         href: $el.attr('href'),
         type: 'link'
@@ -313,7 +299,7 @@ export function detectLoadMoreButtons($: cheerio.CheerioAPI): Array<{
   return loadMoreButtons;
 }
 
-export function analyzePaginationPatterns($: cheerio.CheerioAPI, url: string): PaginationResult {
+export function analyzePaginationPatterns($: cheerio.Root, url: string): PaginationResult {
   const pagination = detectPagination($, url);
   const infiniteScroll = detectInfiniteScroll($);
   const loadMoreButtons = detectLoadMoreButtons($);
@@ -361,7 +347,7 @@ export function analyzePaginationPatterns($: cheerio.CheerioAPI, url: string): P
   };
 }
 
-function detectCurrentPage($: cheerio.CheerioAPI, container: cheerio.Cheerio<cheerio.Element>, pageNumbers: number[]): number {
+function detectCurrentPage($: cheerio.Root, container: ReturnType<typeof $>, pageNumbers: number[]): number {
   // Look for current page indicators
   const currentPageSelectors = [
     '.current',

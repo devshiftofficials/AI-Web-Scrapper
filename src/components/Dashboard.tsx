@@ -404,7 +404,7 @@ export default function Dashboard() {
         toast.success(`Monitoring job ${isActive ? 'started' : 'stopped'}`);
         loadMonitoringJobs();
       }
-    } catch (error) {
+    } catch (_error) {
       toast.error('Failed to update monitoring job');
     }
   };
@@ -419,7 +419,7 @@ export default function Dashboard() {
         toast.success('Monitoring job deleted');
         loadMonitoringJobs();
       }
-    } catch (error) {
+    } catch (_error) {
       toast.error('Failed to delete monitoring job');
     }
   };
@@ -437,7 +437,7 @@ export default function Dashboard() {
       } else {
         toast.error(`Failed to download image: ${result.error}`);
       }
-    } catch (error) {
+    } catch (_error) {
       toast.error('Failed to download image');
     }
   };
@@ -469,7 +469,7 @@ export default function Dashboard() {
       } else {
         toast.error('Failed to download any images');
       }
-    } catch (error) {
+    } catch (_error) {
       toast.dismiss('bulk-download');
       toast.error('Failed to download images');
     }
